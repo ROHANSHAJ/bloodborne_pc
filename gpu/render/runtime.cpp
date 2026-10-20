@@ -3,6 +3,7 @@
 
 #include <bit>
 #include <algorithm>
+#include <span>
 
 #include <boost/container/small_vector.hpp>
 #include <vulkan/vulkan_format_traits.hpp>
@@ -427,7 +428,7 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
         });
     }
     PrepareTransfer(src, dst, Stage::eCopy);
-    CopyImageRegions(src, dst, regions);
+    CopyImageRegions(src, dst, std::span<const vk::ImageCopy>(regions.data(), regions.size()));
     MarkCopied(dst, src->flags & VideoCore::ImageFlagBits::GpuModified);
 }
 

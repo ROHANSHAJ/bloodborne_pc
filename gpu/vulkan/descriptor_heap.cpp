@@ -73,9 +73,9 @@ vk::DescriptorSet DescriptorHeap::Commit(vk::DescriptorSetLayout set_layout) {
         if (const auto [oldest, tick] = full_pools.front(); timeline->IsFree(tick)) {
             pool = oldest;
             full_pools.pop_front();
-            const vk::Result reset = device.resetDescriptorPool(pool);
-            ASSERT_MSG(reset == vk::Result::eSuccess, "descriptor pool reset: {}",
-                       vk::to_string(reset));
+            // Vulkan-Hpp's enhanced API throws on failure and returns void when exceptions are
+            // enabled; the status-returning overload is available only with enhanced mode off.
+            device.resetDescriptorPool(pool);
         } else {
             NewPool();
         }

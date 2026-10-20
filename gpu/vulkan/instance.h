@@ -135,8 +135,8 @@ public:
         return properties.limits.maxFramebufferHeight;
     }
     u32 GetMaxSamplerAllocationCount() const {
-        // KosmicKrisp fails sampler creation past 1024 unique samplers whatever it reports.
-        return driver_id == vk::DriverId::eMesaKosmickrisp
+        // Honeykrisp fails sampler creation past 1024 unique samplers whatever it reports.
+        return driver_id == vk::DriverId::eMesaHoneykrisp
                    ? 1024u
                    : properties.limits.maxSamplerAllocationCount;
     }

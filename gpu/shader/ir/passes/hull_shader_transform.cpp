@@ -27,6 +27,7 @@
 // becomes 0, the invocation id the InvocationId attribute (0 in passthrough shaders).
 // Tessellation factor stores (to TessFactorsBufferBase) become the tess level patch outputs.
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -270,7 +271,7 @@ IR::Value LoadDwords(IR::IREmitter& ir, u32 num_dwords, ReadDword&& read) {
         const IR::F32 dword = read(i);
         dwords.push_back(ir.BitCast<IR::U32>(dword));
     }
-    return ir.PackUint2x32(ir.CompositeConstruct(dwords));
+    return ir.PackUint2x32(ir.CompositeConstruct(std::span<const IR::Value>(dwords.data(), dwords.size())));
 }
 
 /// The tess level a factor index of the factor buffer is: triangles store 3 edge factors and

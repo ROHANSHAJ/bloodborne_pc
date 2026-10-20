@@ -2,6 +2,8 @@
 // Image sampling, gathers, fetches, storage reads/writes and queries. The handle is the image
 // binding (low 16 bits) and the sampler binding (high 16 bits); integer images are read as
 // their float bits.
+#include <span>
+
 #include <boost/container/static_vector.hpp>
 
 #include "shader/ir/microinstruction.h"
@@ -121,7 +123,7 @@ Id EmitImageSampleImplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, Id c
     operands.Add(spv::ImageOperandsMask::Bias, bias);
     operands.AddOffset(ctx, offset);
     const Id sample = ctx.OpImageSampleImplicitLod(image.result_type, image.sampled, coords,
-                                                   operands.mask, operands.operands);
+                                                   operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     return AsFloat(ctx, image.texture, ctx.F32[4], sample);
 }
 
@@ -132,7 +134,7 @@ Id EmitImageSampleExplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, Id c
     operands.Add(spv::ImageOperandsMask::Lod, lod);
     operands.AddOffset(ctx, offset);
     const Id sample = ctx.OpImageSampleExplicitLod(image.result_type, image.sampled, coords,
-                                                   operands.mask, operands.operands);
+                                                   operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     return AsFloat(ctx, image.texture, ctx.F32[4], sample);
 }
 
@@ -143,7 +145,7 @@ Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, 
     operands.Add(spv::ImageOperandsMask::Bias, bias);
     operands.AddOffset(ctx, offset);
     const Id sample = ctx.OpImageSampleDrefImplicitLod(image.result_type, image.sampled, coords,
-                                                       dref, operands.mask, operands.operands);
+                                                       dref, operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     return DepthResult(ctx, image.texture, sample);
 }
 
@@ -154,7 +156,7 @@ Id EmitImageSampleDrefExplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, 
     operands.Add(spv::ImageOperandsMask::Lod, lod);
     operands.AddOffset(ctx, offset);
     const Id sample = ctx.OpImageSampleDrefExplicitLod(image.result_type, image.sampled, coords,
-                                                       dref, operands.mask, operands.operands);
+                                                       dref, operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     return DepthResult(ctx, image.texture, sample);
 }
 
@@ -165,7 +167,7 @@ Id EmitImageGather(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords,
     ImageOperands operands;
     operands.AddOffset(ctx, offset, true);
     const Id texels = ctx.OpImageGather(image.result_type, image.sampled, coords,
-                                        ctx.ConstU32(comp), operands.mask, operands.operands);
+                                        ctx.ConstU32(comp), operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     return AsFloat(ctx, image.texture, ctx.F32[4], texels);
 }
 
@@ -175,7 +177,7 @@ Id EmitImageGatherDref(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords,
     ImageOperands operands;
     operands.AddOffset(ctx, offset, true);
     const Id texels = ctx.OpImageDrefGather(image.result_type, image.sampled, coords, dref,
-                                            operands.mask, operands.operands);
+                                            operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     return AsFloat(ctx, image.texture, ctx.F32[4], texels);
 }
 
@@ -186,7 +188,7 @@ Id EmitImageGradient(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id
     operands.AddDerivatives(derivatives_dx, derivatives_dy);
     operands.AddOffset(ctx, offset);
     const Id sample = ctx.OpImageSampleExplicitLod(image.result_type, image.sampled, coords,
-                                                   operands.mask, operands.operands);
+                                                   operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     return AsFloat(ctx, image.texture, ctx.F32[4], sample);
 }
 
@@ -245,7 +247,7 @@ Id EmitImageRead(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id lod
             operands.Add(spv::ImageOperandsMask::Lod, lod);
             operands.Add(spv::ImageOperandsMask::Sample, ms);
         }
-        texel = ctx.OpImageFetch(color_type, image, coords, operands.mask, operands.operands);
+        texel = ctx.OpImageFetch(color_type, image, coords, operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     } else {
         if (ctx.profile.supports_image_load_store_lod) {
             operands.Add(spv::ImageOperandsMask::Lod, lod);
@@ -255,7 +257,7 @@ Id EmitImageRead(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id lod
             UNREACHABLE_MSG("Unsupported ImageRead with Lod");
         }
         const Id image = ctx.OpLoad(texture.image_type, texture.id);
-        texel = ctx.OpImageRead(color_type, image, coords, operands.mask, operands.operands);
+        texel = ctx.OpImageRead(color_type, image, coords, operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
     }
     return AsFloat(ctx, texture, ctx.F32[4], texel);
 }
@@ -279,7 +281,7 @@ void EmitImageWrite(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id 
     }
     const Id image = ctx.OpLoad(texture.image_type, image_ptr);
     const Id texel = AsFloat(ctx, texture, color_type, color);
-    ctx.OpImageWrite(image, coords, texel, operands.mask, operands.operands);
+    ctx.OpImageWrite(image, coords, texel, operands.mask, std::span<const Id>(operands.operands.data(), operands.operands.size()));
 }
 
 Id EmitCubeFaceIndex(EmitContext& ctx, IR::Inst* inst, Id cube_coords) {

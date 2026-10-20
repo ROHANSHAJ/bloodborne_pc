@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdlib>
+#include <span>
 #include <magic_enum/magic_enum.hpp>
 #include "bbport_copy.h"
 #include "bbport_toggles.h"
@@ -880,7 +881,9 @@ void BufferCache::LayerCopyBackForCpu(VAddr address, bool may_record) {
         auto& readback = SharedReadback(instance);
         if (readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
             std::scoped_lock lk{fast_readback_mutex};
-            if (const u8* data = readback.Copy(mirror_buffer, copies, total,
+            if (const u8* data = readback.Copy(
+                    mirror_buffer,
+                    std::span<const vk::BufferCopy>(copies.data(), copies.size()), total,
                                                scheduler.GetWorkSemaphore()->Handle(), tick)) {
                 for (size_t i = 0; i < copies.size(); ++i) {
                     memory->TryWriteBacking(std::bit_cast<u8*>(guests[i]),
@@ -983,7 +986,9 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
         }
         {
             std::scoped_lock lk{fast_readback_mutex};
-            if (const u8* data = readback.Copy(arena, copies, total_size_bytes,
+            if (const u8* data = readback.Copy(
+                    arena, std::span<const vk::BufferCopy>(copies.data(), copies.size()),
+                                               total_size_bytes,
                                                scheduler.GetWorkSemaphore()->Handle(),
                                                write_tick)) {
                 write_back(data, 0);
@@ -997,7 +1002,8 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
         for (auto& copy : copies) {
             copy.dstOffset += download.offset;
         }
-        runtime.CopyBuffer(arena, download.buffer, copies);
+        runtime.CopyBuffer(arena, download.buffer,
+                           std::span<const vk::BufferCopy>(copies.data(), copies.size()));
         scheduler.Finish();
         download.buffer->Invalidate(download.offset, download.size);
         write_back(download.mapped, download.offset);
@@ -1666,7 +1672,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     }
 
     staging.Flush();
-    runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+    runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(),
+                       std::span<const vk::BufferCopy>(copies.data(), copies.size()));
 }
 
 std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes, bool may_fail) {
@@ -2896,7 +2903,8 @@ void BufferCache::QueueCopyBacks(u64 submitted) {
             }
         });
         if (!copies.empty()) {
-            runtime.CopyBuffer(arena, source->first, copies);
+            runtime.CopyBuffer(arena, source->first,
+                               std::span<const vk::BufferCopy>(copies.data(), copies.size()));
         }
         // Then in place from the next submission on (as ProcessDemotions).
         if (const auto old = resident_ranges.Find(block); old != resident_ranges.end()) {
@@ -3461,11 +3469,13 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
                 copies.assign(staged.begin(), staged.end());
                 total_size_bytes = staged_bytes;
             }
-            src_buffer = UploadCopies(arena, copies, total_size_bytes);
+            src_buffer = UploadCopies(
+                arena, std::span<vk::BufferCopy>(copies.data(), copies.size()), total_size_bytes);
         });
 
     if (src_buffer) {
-        runtime.CopyBuffer(src_buffer, arena, copies);
+        runtime.CopyBuffer(src_buffer, arena,
+                           std::span<const vk::BufferCopy>(copies.data(), copies.size()));
     }
     for (const auto& [chunk_buffer, copy] : chunk_copies) {
         BbStats::buffer_upload_bytes.fetch_add(copy.size, std::memory_order_relaxed);
@@ -3655,8 +3665,9 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
         return !(env && env[0] == '0');
     }();
     const bool want_vram = vram_copy && bind_vram && device_addr == image.info.guest_address;
-    const auto tiled = tile_manager.TileImage(image, buffer_copies, arena, arena_offset,
-                                              want_vram ? size : 0);
+    const auto tiled = tile_manager.TileImage(
+        image, std::span<vk::BufferImageCopy>(buffer_copies.data(), buffer_copies.size()), arena,
+        arena_offset, want_vram ? size : 0);
     if (want_vram && tiled.first) {
         // A binding may end at the end of its chunk's buffer (LayerInPlace).
         const u64 end = std::min<u64>(size, arena->SizeBytes() - arena_offset);

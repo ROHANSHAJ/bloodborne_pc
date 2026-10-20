@@ -290,6 +290,7 @@ struct SignalWatch final : PageWatch::Impl {
 };
 
 #ifndef _WIN32 // userfaultfd: Linux only
+#if defined(UFFD_FEATURE_WP_HUGETLBFS_SHMEM) && defined(UFFD_FEATURE_WP_UNPOPULATED)
 /// BB_UFFD=1: write-protection with userfaultfd instead of mprotect. mprotect takes the address
 /// space lock for writing and splits mappings; while guest threads fault on per-frame buffers and
 /// the GPU thread re-protects uploaded pages, every page fault in the process waits for it.
@@ -415,6 +416,7 @@ struct UffdWatch final : PageWatch::Impl {
     std::atomic<size_t> num_read_revoked{0};
 };
 #endif
+#endif
 
 } // namespace
 
@@ -472,11 +474,15 @@ PageWatch::PageWatch(Vulkan::Rasterizer* rasterizer) {
         if (gpu_memory && gpu_memory[0] == '1') {
             std::printf("GPU: userfaultfd off with BB_GUEST_GPU_MEMORY=1 (dma-buf memory)\n");
         } else {
+#if defined(UFFD_FEATURE_WP_HUGETLBFS_SHMEM) && defined(UFFD_FEATURE_WP_UNPOPULATED)
             try {
                 impl = std::make_unique<UffdWatch>(rasterizer);
                 return;
             } catch (const std::runtime_error&) {
             }
+#else
+            std::printf("GPU: userfaultfd unavailable with these Linux headers; using page protection\n");
+#endif
         }
     }
 #endif

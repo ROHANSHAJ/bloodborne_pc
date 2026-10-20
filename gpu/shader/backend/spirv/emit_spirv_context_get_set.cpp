@@ -3,6 +3,7 @@
 // data, constant buffers, input/output attributes and builtins, tessellation attributes and
 // patches, and buffer loads/stores (bound buffers, or the page table for paged ones).
 #include <bit>
+#include <span>
 
 #include <magic_enum/magic_enum.hpp>
 
@@ -460,7 +461,8 @@ static Id EmitLoadBufferB32xN(EmitContext& ctx, IR::Inst* inst, u32 handle, Id a
         ids.push_back(result_i);
     }
 
-    const Id result = N == 1 ? ids[0] : ctx.OpCompositeConstruct(data_types[N], ids);
+    const Id result = N == 1 ? ids[0] : ctx.OpCompositeConstruct(
+        data_types[N], std::span<const Id>(ids.data(), ids.size()));
     return result;
 }
 

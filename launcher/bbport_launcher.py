@@ -27,7 +27,10 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
+from bbport_gtk_compat import add_view_page, install_compat, launch_file  # noqa: E402
+from bbport_updates import UpdateError, apply_update, check_for_updates  # noqa: E402
+install_compat(Adw, Gio, GLib, GObject, Gtk)
 
 PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
@@ -173,6 +176,8 @@ PREUPLOAD = [("Обычная", "", "Без лишней видеопамяти"
 
 DEFAULTS = {
     "ui_language": "",
+    "auto_updates": True,
+    "last_update_check": 0,
     "game_dir": "" if PACKAGED else str(PORT_DIR.parent / "CUSA03173"),
     "user_dir": "",
     "mods_dir": "",
@@ -364,6 +369,17 @@ def game_environment(s):
     """Environment for run.sh from the launcher settings."""
     env = dict(os.environ)
     env["BB_GAME_DIR"] = str(Path(s["game_dir"]).expanduser())
+    # A checkout with a completed local build can launch those binaries directly. This avoids
+    # making a desktop launch depend on build-time headers that may only have been staged
+    # temporarily (the packaged launcher already sets BB_PREBUILT itself).
+    rebuild_required = (PORT_DIR / "out" / ".bbport-rebuild-required").exists()
+    if not PACKAGED and not env.get("BB_PREBUILT") and not rebuild_required:
+        local_probe = PORT_DIR / "out" / "bb-probe"
+        local_gpu = PORT_DIR / "out" / "gpu" / "libbbgpu.so"
+        local_caps = PORT_DIR / "out" / "bb-gpu-capabilities"
+        if local_probe.is_file() and local_gpu.is_file() and local_caps.is_file():
+            env["BB_PREBUILT"] = "1"
+            env["BB_PROBE"] = str(local_probe)
     if s["user_dir"]:
         env["BB_USER_DIR"] = s["user_dir"]
     env["BB_MODS_DIR"] = str(Path(s.get("mods_dir") or DATA_DIR / "mods").expanduser())
@@ -478,7 +494,7 @@ def open_folder(window, path):
         Path(path).mkdir(parents=True, exist_ok=True)
     except OSError:
         return
-    Gtk.FileLauncher.new(Gio.File.new_for_path(str(path))).launch(window, None, None)
+    launch_file(window, path, Gio, Gtk)
 
 
 def combo_row(title, subtitle, choices, current):
@@ -607,12 +623,16 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.process = None
         self.stream = None
         self.fsr411_build = None  # tools/fsr4cap/build_assets.sh while it runs
+        self.update_thread = None
+        self.update_result = None
         self.build()
         self.connect("close-request", self.on_close)
+        GLib.idle_add(self.maybe_auto_check_updates)
+        GLib.timeout_add_seconds(24 * 60 * 60, self.periodic_auto_check_updates)
 
     def build(self):
         """(Re)creates the window's content in the current launcher language."""
-        toolbar = Adw.ToolbarView()
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
         self.stack = Adw.ViewStack()
         switcher = Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)
@@ -620,20 +640,22 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.launch_button = Gtk.Button()
         self.launch_button.connect("clicked", self.on_launch)
         header.pack_end(self.launch_button)
-        toolbar.add_top_bar(header)
+        content.append(header)
 
         self.toasts = Adw.ToastOverlay()
         self.toasts.set_child(self.stack)
-        toolbar.set_content(self.toasts)
-        self.set_content(toolbar)
+        content.append(self.toasts)
+        self.set_content(content)
 
         log_text = self.log_text() if hasattr(self, "log_view") else ""
-        self.stack.add_titled_with_icon(self.build_settings_page(), "settings", tr("Настройки"),
-                                        "preferences-system-symbolic")
-        self.stack.add_titled_with_icon(self.build_online_page(), "online", tr("Онлайн"),
-                                        "network-workgroup-symbolic")
-        self.stack.add_titled_with_icon(self.build_log_page(), "log", tr("Журнал"),
-                                        "utilities-terminal-symbolic")
+        add_view_page(self.stack, self.build_settings_page(), "settings", tr("Настройки"),
+                      "preferences-system-symbolic")
+        add_view_page(self.stack, self.build_online_page(), "online", tr("Онлайн"),
+                      "network-workgroup-symbolic")
+        add_view_page(self.stack, self.build_log_page(), "log", tr("Журнал"),
+                      "utilities-terminal-symbolic")
+        add_view_page(self.stack, self.build_updates_page(), "updates", tr("Обновления"),
+                      "software-update-available-symbolic")
         self.log_view.get_buffer().set_text(log_text)
         self.update_launch_button()
         self.update_game_status()
@@ -650,6 +672,171 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.launch_button.set_sensitive(self.fsr411_build is None)
         if hasattr(self, "fsr411_button"):
             self.fsr411_button.set_sensitive(not running)
+
+    def build_updates_page(self):
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup(
+            title=tr("Обновления"),
+            description=tr("Проверяет origin автоматически раз в сутки. Перед установкой показывает список изменений и спрашивает подтверждение."),
+        )
+        self.auto_updates_row = Adw.SwitchRow(
+            title=tr("Автоматически проверять обновления"),
+            active=self.settings.get("auto_updates", True),
+        )
+        self.auto_updates_row.connect("notify::active", self.on_auto_updates_changed)
+        group.add(self.auto_updates_row)
+
+        self.update_status_row = Adw.ActionRow(
+            title=tr("Состояние обновлений"), subtitle=tr("Проверка ещё не выполнялась"))
+        self.check_updates_button = Gtk.Button(label=tr("Проверить сейчас"), valign=Gtk.Align.CENTER)
+        self.check_updates_button.connect("clicked", self.on_check_updates)
+        self.update_status_row.add_suffix(self.check_updates_button)
+        group.add(self.update_status_row)
+
+        self.update_apply_row = Adw.ActionRow(title=tr("Установить обновление"))
+        self.update_apply_button = Gtk.Button(label=tr("Обновить"), valign=Gtk.Align.CENTER)
+        self.update_apply_button.set_sensitive(False)
+        self.update_apply_button.connect("clicked", self.on_apply_update)
+        self.update_apply_row.add_suffix(self.update_apply_button)
+        group.add(self.update_apply_row)
+
+        self.update_text = Gtk.TextView(editable=False, cursor_visible=False,
+                                        wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        self.update_text.set_monospace(True)
+        self.update_text.set_size_request(-1, 180)
+        self.update_buffer = self.update_text.get_buffer()
+        self.update_buffer.set_text(tr("Изменения появятся здесь после проверки."))
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_min_content_height(190)
+        scroller.set_child(self.update_text)
+        group.add(scroller)
+        page.add(group)
+        return page
+
+    def on_auto_updates_changed(self, row, *_):
+        self.settings["auto_updates"] = row.get_active()
+        save_settings(self.settings)
+
+    def maybe_auto_check_updates(self):
+        if self.settings.get("auto_updates", True):
+            last = float(self.settings.get("last_update_check", 0) or 0)
+            if time.time() - last >= 24 * 60 * 60:
+                self.start_update_check(silent=True)
+        return GLib.SOURCE_REMOVE
+
+    def periodic_auto_check_updates(self):
+        if self.settings.get("auto_updates", True):
+            self.start_update_check(silent=True)
+        return GLib.SOURCE_CONTINUE
+
+    def on_check_updates(self, *_):
+        self.start_update_check(silent=False)
+
+    def start_update_check(self, silent=False):
+        if self.update_thread and self.update_thread.is_alive():
+            return
+        self.check_updates_button.set_sensitive(False)
+        self.update_status_row.set_subtitle(tr("Проверяю репозиторий…"))
+        def worker():
+            try:
+                result = check_for_updates(PORT_DIR)
+                error = None
+            except (UpdateError, OSError) as exc:
+                result, error = None, str(exc)
+            GLib.idle_add(self.finish_update_check, result, error, silent)
+        self.update_thread = threading.Thread(target=worker, daemon=True)
+        self.update_thread.start()
+
+    def finish_update_check(self, result, error, silent):
+        self.check_updates_button.set_sensitive(True)
+        self.settings["last_update_check"] = time.time()
+        save_settings(self.settings)
+        self.update_result = result
+        self.update_apply_button.set_sensitive(False)
+        if error:
+            self.update_status_row.set_subtitle(tr("Не удалось проверить обновления: {}" ).format(error))
+            self.update_buffer.set_text(tr("Проверьте подключение и настройки Git remote. Локальные файлы не менялись."))
+            return GLib.SOURCE_REMOVE
+        if result["count"] == 0:
+            self.update_status_row.set_subtitle(tr("Установлена последняя версия ({})").format(result["head"][:12]))
+            self.update_buffer.set_text(tr("Обновлений нет. Ветка: {}.").format(result["branch"]))
+            return GLib.SOURCE_REMOVE
+
+        lines = [tr("Найдено обновлений: {} (ветка {})").format(result["count"], result["branch"]), ""]
+        lines.extend(f"{commit}  {subject}" for commit, subject in result["commits"])
+        if result["count"] > len(result["commits"]):
+            lines.append(tr("Показаны последние 40 записей."))
+        lines.append("")
+        lines.append(tr("Изменённые файлы:"))
+        lines.extend(result["changed_files"] or [tr("Список файлов недоступен.")])
+        self.update_buffer.set_text("\n".join(lines))
+        if result["submodule_changes"]:
+            self.update_status_row.set_subtitle(tr("Обновление затрагивает подмодули; ручное обновление требуется."))
+        elif not result["clean"]:
+            self.update_status_row.set_subtitle(tr("Есть локальные изменения; сначала сохраните или зафиксируйте их."))
+        elif not result["fast_forward"]:
+            self.update_status_row.set_subtitle(tr("Ветки разошлись; автоматическое обновление невозможно."))
+        else:
+            self.update_status_row.set_subtitle(tr("Доступно обновлений: {}. Требуется подтверждение.").format(result["count"]))
+            self.update_apply_button.set_sensitive(True)
+            if not silent:
+                self.confirm_update()
+        return GLib.SOURCE_REMOVE
+
+    def confirm_update(self):
+        dialog = Gtk.Dialog(title=tr("Установить обновление?"), transient_for=self,
+                            modal=True, destroy_with_parent=True)
+        dialog.add_button(tr("Отмена"), Gtk.ResponseType.CANCEL)
+        dialog.add_button(tr("Обновить"), Gtk.ResponseType.ACCEPT)
+        label = Gtk.Label(label=tr("Будут установлены изменения из {}. Перед установкой показан список коммитов и файлов.").format(self.update_result["target"]))
+        label.set_wrap(True)
+        label.set_margin_top(16)
+        label.set_margin_bottom(16)
+        label.set_margin_start(16)
+        label.set_margin_end(16)
+        dialog.get_content_area().append(label)
+        dialog.connect("response", self.on_update_confirmation, dialog)
+        dialog.present()
+
+    def on_update_confirmation(self, dialog, response, *_):
+        dialog.destroy()
+        if response == Gtk.ResponseType.ACCEPT:
+            self.start_apply_update()
+
+    def on_apply_update(self, *_):
+        if self.update_result:
+            self.confirm_update()
+
+    def start_apply_update(self):
+        result = self.update_result
+        if not result:
+            return
+        self.update_apply_button.set_sensitive(False)
+        self.check_updates_button.set_sensitive(False)
+        self.update_status_row.set_subtitle(tr("Устанавливаю обновление…"))
+        def worker():
+            try:
+                applied = apply_update(PORT_DIR, result["target"], result["head"])
+                error = None
+            except (UpdateError, OSError) as exc:
+                applied, error = None, str(exc)
+            GLib.idle_add(self.finish_apply_update, applied, error)
+        self.update_thread = threading.Thread(target=worker, daemon=True)
+        self.update_thread.start()
+
+    def finish_apply_update(self, applied, error):
+        self.check_updates_button.set_sensitive(True)
+        if error:
+            self.update_status_row.set_subtitle(tr("Не удалось установить обновление: {}" ).format(error))
+            self.update_apply_button.set_sensitive(bool(self.update_result and self.update_result.get("clean")))
+        else:
+            self.update_result = None
+            self.update_status_row.set_subtitle(tr("Обновлено до {}. Перезапустите лаунчер.").format(applied["new_head"][:12]))
+            if applied["rebuild"]:
+                self.update_buffer.set_text(tr("Обновление изменило исходный код. При следующем запуске игры будет выполнена пересборка."))
+            else:
+                self.update_buffer.set_text(tr("Обновление установлено. Перезапустите лаунчер, чтобы загрузить новую версию."))
+        return GLib.SOURCE_REMOVE
 
     # --- settings page -------------------------------------------------------------------
 
@@ -2035,7 +2222,7 @@ class LauncherWindow(Adw.ApplicationWindow):
 class LauncherApp(Adw.Application):
     def __init__(self):
         super().__init__(application_id="io.github.bbport.Launcher",
-                         flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+                         flags=Gio.ApplicationFlags.FLAGS_NONE)
 
     def do_activate(self):
         window = self.get_active_window() or LauncherWindow(self)

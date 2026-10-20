@@ -4,6 +4,7 @@
 // the resource passes); sample addresses as all the GCN address registers the modifiers may use
 // (resolved once the image type is known).
 #include <bit>
+#include <span>
 
 #include <boost/container/static_vector.hpp>
 
@@ -315,10 +316,15 @@ void Translator::BUFFER_STORE(u32 num_dwords, bool is_inst_typed, bool is_buffer
         while (comps.size() < 4) {
             comps.push_back(ir.Imm32(0.f));
         }
-        ir.StoreBufferFormat(handle, address, ir.CompositeConstruct(comps), buffer_info);
+        ir.StoreBufferFormat(handle, address,
+                             ir.CompositeConstruct(std::span<const IR::Value>(comps.data(), comps.size())),
+                             buffer_info);
         return;
     }
-    IR::Value value = num_dwords == 1 ? comps[0] : ir.CompositeConstruct(comps);
+    IR::Value value = num_dwords == 1
+                          ? comps[0]
+                          : ir.CompositeConstruct(
+                                std::span<const IR::Value>(comps.data(), comps.size()));
     if (scalar_width != 32) {
         value = ir.UConvert(scalar_width, IR::U32{value});
     }

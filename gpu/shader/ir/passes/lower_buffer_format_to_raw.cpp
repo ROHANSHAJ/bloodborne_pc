@@ -2,6 +2,8 @@
 // Typed buffer accesses (buffer_load_format, tbuffer_store and the like) become raw loads and
 // stores with the format's unpacking or packing done in the shader: the format comes from the
 // instruction when it is typed, otherwise from the buffer's sharp.
+#include <span>
+
 #include <boost/container/static_vector.hpp>
 
 #include "common/assert.h"
@@ -128,7 +130,7 @@ IR::Value LoadBufferFormat(IR::IREmitter& ir, const IR::Value& handle, const IR:
             IR::F32{format.num_components == 1 ? loaded : ir.CompositeExtract(loaded, i)};
         components.push_back(ApplyReadNumberConversion(ir, component, format.num_conversion));
     }
-    return ApplySwizzle(ir, ir.CompositeConstruct(components), format.swizzle);
+    return ApplySwizzle(ir, ir.CompositeConstruct(std::span<const IR::Value>(components.data(), components.size())), format.swizzle);
 }
 
 /// A store: the vec4 unswizzled, cut to the format's components, converted and packed.
@@ -141,7 +143,7 @@ void StoreBufferFormat(IR::IREmitter& ir, const IR::Value& handle, const IR::U32
         const auto component = IR::F32{ir.CompositeExtract(swizzled, i)};
         components.push_back(ApplyWriteNumberConversion(ir, component, format.num_conversion));
     }
-    const auto data = components.size() == 1 ? components[0] : ir.CompositeConstruct(components);
+    const auto data = components.size() == 1 ? components[0] : ir.CompositeConstruct(std::span<const IR::Value>(components.data(), components.size()));
 
     switch (format.data_format) {
     case DataFormat::FormatInvalid:

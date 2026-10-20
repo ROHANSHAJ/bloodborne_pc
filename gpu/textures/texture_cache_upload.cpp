@@ -4,6 +4,7 @@
 #include "textures/texture_cache.h"
 
 #include <algorithm>
+#include <span>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -245,7 +246,8 @@ void TextureCache::RefreshImage(Image& image) {
     for (auto& copy : copies) {
         copy.bufferOffset += linear_offset;
     }
-    runtime.UploadImage(&image, linear, copies);
+    runtime.UploadImage(
+        &image, linear, std::span<const vk::BufferImageCopy>(copies.data(), copies.size()));
 }
 
 } // namespace VideoCore

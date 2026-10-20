@@ -7,7 +7,9 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/version.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
@@ -241,7 +243,11 @@ bool Source::FindStreams() {
             CopyLanguage(stream, info.details.video.language_code);
         } else {
             info.type = AvPlayerStreamType::Audio;
+#if LIBAVUTIL_VERSION_MAJOR >= 57
             info.details.audio.channel_count = u16(codec.ch_layout.nb_channels);
+#else
+            info.details.audio.channel_count = u16(codec.channels);
+#endif
             info.details.audio.sample_rate = u32(codec.sample_rate);
             info.details.audio.size = 0;
             CopyLanguage(stream, info.details.audio.language_code);
@@ -581,15 +587,32 @@ bool Source::ToFrame(Track& track, bool is_video, const AVFrame& decoded) {
         FramePtr converted;
         if (decoded.format != AV_SAMPLE_FMT_S16) {
             if (!swr) {
+#if LIBAVUTIL_VERSION_MAJOR >= 57
                 swr_alloc_set_opts2(&swr, &decoded.ch_layout, AV_SAMPLE_FMT_S16,
                                     decoded.sample_rate, &decoded.ch_layout,
                                     AVSampleFormat(decoded.format), decoded.sample_rate, 0,
                                     nullptr);
+#else
+                const int64_t channel_layout = decoded.channel_layout
+                                                   ? decoded.channel_layout
+                                                   : av_get_default_channel_layout(decoded.channels);
+                swr = swr_alloc_set_opts(nullptr, channel_layout, AV_SAMPLE_FMT_S16,
+                                         decoded.sample_rate, channel_layout,
+                                         AVSampleFormat(decoded.format), decoded.sample_rate, 0,
+                                         nullptr);
+#endif
                 swr_init(swr);
             }
             converted.reset(av_frame_alloc());
             converted->format = AV_SAMPLE_FMT_S16;
+#if LIBAVUTIL_VERSION_MAJOR >= 57
             converted->ch_layout = decoded.ch_layout;
+#else
+            converted->channel_layout = decoded.channel_layout
+                                            ? decoded.channel_layout
+                                            : av_get_default_channel_layout(decoded.channels);
+            converted->channels = decoded.channels;
+#endif
             converted->sample_rate = decoded.sample_rate;
             if (swr_convert_frame(swr, converted.get(), &decoded) < 0) {
                 LOG_ERROR(Lib_AvPlayer, "could not convert an audio frame to 16-bit PCM");
@@ -597,11 +620,17 @@ bool Source::ToFrame(Track& track, bool is_video, const AVFrame& decoded) {
             }
             pcm = converted.get();
         }
+#if LIBAVUTIL_VERSION_MAJOR >= 57
         const u64 bytes = u64(pcm->ch_layout.nb_channels) * u64(pcm->nb_samples) * sizeof(s16);
+        const u16 channel_count = u16(pcm->ch_layout.nb_channels);
+#else
+        const u64 bytes = u64(pcm->channels) * u64(pcm->nb_samples) * sizeof(s16);
+        const u16 channel_count = u16(pcm->channels);
+#endif
         const u64 size = std::min(bytes, buffer->Size());
         std::memcpy(buffer->Data(), pcm->data[0], size);
         auto& details = info.details.audio;
-        details.channel_count = u16(pcm->ch_layout.nb_channels);
+        details.channel_count = channel_count;
         details.sample_rate = u32(pcm->sample_rate);
         details.size = u32(size);
     }

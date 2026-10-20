@@ -13,6 +13,44 @@ EN = {
     "Остановить": "Stop",
     "Настройки": "Settings",
     "Журнал": "Log",
+    "Обновления": "Updates",
+    "Проверяет origin автоматически раз в сутки. Перед установкой показывает список изменений и спрашивает подтверждение.":
+        "Checks origin once a day. It shows the changes and asks before installing an update.",
+    "Автоматически проверять обновления": "Check for updates automatically",
+    "Состояние обновлений": "Update status",
+    "Проверка ещё не выполнялась": "Not checked yet",
+    "Проверить сейчас": "Check now",
+    "Установить обновление": "Install update",
+    "Обновить": "Update",
+    "Изменения появятся здесь после проверки.": "Changes will appear here after a check.",
+    "Проверяю репозиторий…": "Checking repository…",
+    "Не удалось проверить обновления: {}": "Could not check for updates: {}",
+    "Проверьте подключение и настройки Git remote. Локальные файлы не менялись.":
+        "Check your connection and Git remote settings. Local files were not changed.",
+    "Установлена последняя версия ({})": "Latest version installed ({})",
+    "Обновлений нет. Ветка: {}.": "No updates available. Branch: {}.",
+    "Найдено обновлений: {} (ветка {})": "Updates found: {} (branch {})",
+    "Показаны последние 40 записей.": "Showing the latest 40 entries.",
+    "Изменённые файлы:": "Changed files:",
+    "Список файлов недоступен.": "File list unavailable.",
+    "Обновление затрагивает подмодули; ручное обновление требуется.":
+        "This update changes submodules; manual updating is required.",
+    "Есть локальные изменения; сначала сохраните или зафиксируйте их.":
+        "There are local changes. Save or commit them first.",
+    "Ветки разошлись; автоматическое обновление невозможно.":
+        "The branches have diverged. Automatic update is unavailable.",
+    "Доступно обновлений: {}. Требуется подтверждение.": "{} updates available. Confirmation required.",
+    "Установить обновление?": "Install update?",
+    "Отмена": "Cancel",
+    "Будут установлены изменения из {}. Перед установкой показан список коммитов и файлов.":
+        "Changes from {} will be installed. Review the listed commits and files before continuing.",
+    "Устанавливаю обновление…": "Installing update…",
+    "Не удалось установить обновление: {}": "Could not install update: {}",
+    "Обновлено до {}. Перезапустите лаунчер.": "Updated to {}. Restart the launcher.",
+    "Обновление изменило исходный код. При следующем запуске игры будет выполнена пересборка.":
+        "The update changed source code. The game will be rebuilt the next time you launch it.",
+    "Обновление установлено. Перезапустите лаунчер, чтобы загрузить новую версию.":
+        "Update installed. Restart the launcher to load the new version.",
     "Не удалось запустить: {}": "Could not start: {}",
     "Копировать": "Copy",
     "Экспорт журнала…": "Export log…",

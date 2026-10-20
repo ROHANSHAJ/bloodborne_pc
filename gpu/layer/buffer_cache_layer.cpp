@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <mutex>
+#include <span>
 #include <unordered_set>
 #include <sys/mman.h>
 #include <ucontext.h>
@@ -649,7 +650,8 @@ u64 BufferCache::LayerPromoteRun(u64 first, u64 end) {
                                                        (v_end - v_first) << block_shift});
                                  });
             if (!copies.empty()) {
-                runtime.CopyBuffer(old_buffer, target, copies);
+                runtime.CopyBuffer(old_buffer, target,
+                                   std::span<const vk::BufferCopy>(copies.data(), copies.size()));
             }
             Layer().RemoveMirror(old.base);
             auto node = layer_mirrors.extract(old.base);
@@ -973,7 +975,8 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
                                   (v_end - v_first) << block_shift});
             });
             if (!copies.empty()) {
-                runtime.CopyBuffer(old_buffer, mirror.get(), copies);
+                runtime.CopyBuffer(old_buffer, mirror.get(),
+                                   std::span<const vk::BufferCopy>(copies.data(), copies.size()));
             }
             Layer().AddMirror(base, size, mirror->Handle(), mirror->BufferDeviceAddress(), mirror.get());
             layer_mirrors.emplace(base, std::move(mirror));
